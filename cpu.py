@@ -1,5 +1,7 @@
+import random
+
 # echo-16 cpu made by las-r on github
-# v0.2
+# v0.3
 
 class BreakLoop(Exception):
     pass
@@ -7,10 +9,12 @@ class BreakLoop(Exception):
 # cpu & memory class
 class e16:
     # initialize
-    def __init__(self, disp, mhz=2, debug=False):
-        self.disp = disp
+    def __init__(self, screen, width, height, scale, mhz=0.005, debug=False):
+        self.screen = screen
         self.mhz = mhz * 1000000
         self.debug = debug
+        self.disp = [[(0, 0, 0) for _ in range(width)] for _ in range(height)]
+        self.SCALE = scale
         
         # system states
         self.paused = False
@@ -47,7 +51,15 @@ class e16:
     # memory functions
     def mem16(self, loc):
         return (self.mem[loc] << 8) + self.mem[(loc + 1) & 65535]
-        
+    def loadRom(self, filename):
+        with open(filename, "rb") as rom:
+            raw = bytearray(rom.read())
+            data = raw.split(bytes([0xaf]), 1)
+            data0 = data[0] + bytes([0xaf])
+            self.mem[512:512 + len(data0)] = data0
+            if len(data) > 1:
+                self.mem[512 + len(data0):512 + len(data0) + len(data[1])] = data[1]
+    
     # math functions
     def add(self, x, y):
         res = x + y
@@ -58,8 +70,28 @@ class e16:
         self.o = res < 0
         return res & 65535
         
-    # step function
+    # display functions
+    def fillDisp(self, col):
+        self.disp = [[col for _ in range(len(self.disp[0]))] for _ in range(len(self.disp))]
+    def colConv(self, c):
+        r = (c >> 5) & 3
+        g = (c >> 2) & 7
+        b = c & 3
+        return (r * 255) // 3, (g * 255) // 7, (b * 255) // 3
+    def putSpr(self, x, y):
+        size = self.mem[self.i]
+        h = size & 0x0F
+        w = (size & 0xF0) >> 4
+        for row in range(h):
+            for umn in range(w):
+                pix = self.mem[self.i + 1 + row * w + umn]
+                if pix & 0b10000000:
+                    col = pix >> 1
+                    self.disp[y + row][x + umn] = self.colConv(col)              
+    
+    # execution functions
     def step(self):
+        dt = self.dt
         if not self.paused:
             # unpack values
             paused = self.paused
@@ -69,11 +101,19 @@ class e16:
             l, m, n, o = self.l, self.m, self.n, self.o
             dt, st = self.dt, self.st
             stk = self.stk
+            disp = self.disp
             mem16 = self.mem16
             add = self.add
             sub = self.sub
+            fillDisp = self.fillDisp
+            putSpr = self.putSpr
+            colConv = self.colConv
+            
+            print(f"running opc {hex(mem[pc])} at {pc}")
 
             # get opcode
+            #print(pc)
+            #print(len(mem))
             opc = mem[pc]
             pc += 1
             o1 = opc >> 4
@@ -239,11 +279,8 @@ class e16:
                 case 8:
                     match o2:
                         case 0:
-                            bt1 = mem[pc]
-                            pc += 1
-                            bt2 = mem[pc]
-                            pc += 1
-                            a = (bt1 << 8) + bt2
+                            a = mem16(pc)
+                            pc += 2
                         case 1: b |= a
                         case 2: c |= a
                         case 3: d |= a
@@ -253,11 +290,8 @@ class e16:
                         case 7: h |= a
                         case 8: a |= b
                         case 9:
-                            bt1 = mem[pc]
-                            pc += 1
-                            bt2 = mem[pc]
-                            pc += 1
-                            b = (bt1 << 8) + bt2
+                            b = mem16(pc)
+                            pc += 2
                         case 10: c |= b
                         case 11: d |= b
                         case 12: e |= b
@@ -294,7 +328,7 @@ class e16:
                         case 7: dt = h
                         case 8: st = a
                         case 9: st = b
-                        case 10: a, h = h, a
+                        case 10: a = random.randint(0, 65535)
                         case 11:
                             if not l:
                                 pc += 1
@@ -359,14 +393,17 @@ class e16:
                         case 5: i = f
                         case 6: i = g
                         case 7: i = h
-                        case 8: pass
-                        case 9: pass
-                        case 10: pass
-                        case 11: pass
+                        case 8: putSpr(a, b)
+                        case 9: putSpr(c, d)
+                        case 10: putSpr(e, f)
+                        case 11: putSpr(g, h)
                         case 12: j = a
                         case 13: b = a
-                        case 14: pass
-                        case 15: pass
+                        case 14:
+                            col = mem[pc]
+                            pc += 1
+                            fillDisp(colConv(col & 0b01111111))
+                        case 15: fillDisp((0, 0, 0))
                 case 14:
                     match o2:
                         case 0:
@@ -466,3 +503,6 @@ class e16:
             self.dt, self.st = dt, st
             self.stk = stk
             self.mem16 = mem16
+        else:
+            if not dt:
+                paused = False
