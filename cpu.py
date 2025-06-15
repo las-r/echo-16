@@ -9,12 +9,14 @@ class BreakLoop(Exception):
 # cpu & memory class
 class e16:
     # initialize
-    def __init__(self, screen, width, height, scale, mhz=0.005, debug=False):
+    def __init__(self, screen, width, height, scale, mhz, debug):
         self.screen = screen
         self.mhz = mhz * 1000000
         self.debug = debug
         self.disp = [[(0, 0, 0) for _ in range(width)] for _ in range(height)]
         self.SCALE = scale
+        self.WIDTH = width
+        self.HEIGHT = height
         
         # system states
         self.paused = False
@@ -51,14 +53,16 @@ class e16:
     # memory functions
     def mem16(self, loc):
         return (self.mem[loc] << 8) + self.mem[(loc + 1) & 65535]
+    def set16(self, a, b):
+        self.mem[a] = (b & 0xf0) >> 4
+        self.mem[a + 1] = b & 0x0f
     def loadRom(self, filename):
         with open(filename, "rb") as rom:
             raw = bytearray(rom.read())
             data = raw.split(bytes([0xaf]), 1)
-            data0 = data[0] + bytes([0xaf])
-            self.mem[512:512 + len(data0)] = data0
-            if len(data) > 1:
-                self.mem[512 + len(data0):512 + len(data0) + len(data[1])] = data[1]
+            data[0] += bytes([0xaf])
+            self.mem[512:512 + len(data[0])] = data[0]
+            self.mem[:len(data[1])] = data[1]
     
     # math functions
     def add(self, x, y):
@@ -79,6 +83,8 @@ class e16:
         b = c & 3
         return (r * 255) // 3, (g * 255) // 7, (b * 255) // 3
     def putSpr(self, x, y):
+        x %= self.WIDTH
+        y %= self.HEIGHT
         size = self.mem[self.i]
         h = size & 0x0F
         w = (size & 0xF0) >> 4
@@ -86,8 +92,18 @@ class e16:
             for umn in range(w):
                 pix = self.mem[self.i + 1 + row * w + umn]
                 if pix & 0b10000000:
-                    col = pix >> 1
-                    self.disp[y + row][x + umn] = self.colConv(col)              
+                    col = pix & 0b01111111
+                    self.disp[y + row][x + umn] = self.colConv(col)          
+    
+    # skip instruction function
+    def skipInst(self):
+        opc = self.mem[self.pc]
+        if opc in [0xde]:
+            self.pc += 2
+        elif opc in [0x80, 0x89, 0xdc, 0xdd]:
+            self.pc += 3
+        else:
+            self.pc += 1
     
     # execution functions
     def step(self):
@@ -101,15 +117,35 @@ class e16:
             l, m, n, o = self.l, self.m, self.n, self.o
             dt, st = self.dt, self.st
             stk = self.stk
-            disp = self.disp
             mem16 = self.mem16
             add = self.add
             sub = self.sub
             fillDisp = self.fillDisp
             putSpr = self.putSpr
             colConv = self.colConv
+            set16 = self.set16
+            skipInst = self.skipInst
             
-            print(f"running opc {hex(mem[pc])} at {pc}")
+            # skip helper function
+            def condSkip(cond):
+                if not cond:
+                    skipInst()
+                    return self.pc
+                return pc
+            
+            # debug
+            if self.debug:
+                print(f"OPCODE: {hex(mem[pc - 1])} | PC: {pc}")
+                print("Registers:")
+                print(f"A: {a}")
+                print(f"B: {b}")
+                print(f"C: {c}")
+                print(f"D: {d}")
+                print(f"E: {e}")
+                print(f"F: {f}")
+                print(f"G: {g}")
+                print(f"H: {h}")
+                input()
 
             # get opcode
             #print(pc)
@@ -300,7 +336,7 @@ class e16:
                         case 15: h |= b
                 case 9:
                     match o2:
-                        case 0: a, b = b, a
+                        case 0: set16(a, b)
                         case 1: b ^= a
                         case 2: c ^= a
                         case 3: d ^= a
@@ -309,7 +345,7 @@ class e16:
                         case 6: g ^= a
                         case 7: h ^= a
                         case 8: a ^= b
-                        case 9: g, h = h, g
+                        case 9: pc -= a + 1
                         case 10: c ^= b
                         case 11: d ^= b
                         case 12: e ^= b
@@ -397,8 +433,12 @@ class e16:
                         case 9: putSpr(c, d)
                         case 10: putSpr(e, f)
                         case 11: putSpr(g, h)
-                        case 12: j = a
-                        case 13: b = a
+                        case 12:
+                            c = mem16(pc)
+                            pc += 2
+                        case 13:
+                            d = mem16(pc)
+                            pc += 2
                         case 14:
                             col = mem[pc]
                             pc += 1
@@ -406,54 +446,22 @@ class e16:
                         case 15: fillDisp((0, 0, 0))
                 case 14:
                     match o2:
-                        case 0:
-                            if not a:
-                                pc += 1
-                        case 1:
-                            if not b:
-                                pc += 1
-                        case 2:
-                            if not c:
-                                pc += 1
-                        case 3:
-                            if not d:
-                                pc += 1
-                        case 4:
-                            if not e:
-                                pc += 1
-                        case 5:
-                            if not f:
-                                pc += 1
-                        case 6:
-                            if not g:
-                                pc += 1
-                        case 7:
-                            if not h:
-                                pc += 1
-                        case 8:
-                            if a:
-                                pc += 1
-                        case 9:
-                            if b:
-                                pc += 1
-                        case 10:
-                            if c:
-                                pc += 1
-                        case 11:
-                            if d:
-                                pc += 1
-                        case 12:
-                            if e:
-                                pc += 1
-                        case 13:
-                            if f:
-                                pc += 1
-                        case 14:
-                            if g:
-                                pc += 1
-                        case 15:
-                            if h:
-                                pc += 1
+                        case 0: condSkip(a)
+                        case 1: condSkip(b)
+                        case 2: condSkip(c)
+                        case 3: condSkip(d)
+                        case 4: condSkip(e)
+                        case 5: condSkip(f)
+                        case 6: condSkip(g)
+                        case 7: condSkip(h)
+                        case 8: condSkip(not a)
+                        case 9: condSkip(not b)
+                        case 10: condSkip(not c)
+                        case 11: condSkip(not d)
+                        case 12: condSkip(not e)
+                        case 13: condSkip(not f)
+                        case 14: condSkip(not g)
+                        case 15: condSkip(not h)
                 case 15:
                     match o2:
                         case 0: l = True
@@ -462,30 +470,14 @@ class e16:
                         case 3: m = False
                         case 4: l = not l
                         case 5: m = not m
-                        case 6:
-                            if not a == b:
-                                pc += 1
-                        case 7:
-                            if not c == d:
-                                pc += 1
-                        case 8:
-                            if not e == f:
-                                pc += 1
-                        case 9:
-                            if not g == h:
-                                pc += 1
-                        case 10:
-                            if a == b:
-                                pc += 1
-                        case 11:
-                            if c == d:
-                                pc += 1
-                        case 12:
-                            if e == f:
-                                pc += 1
-                        case 13:
-                            if g == h:
-                                pc += 1
+                        case 6: condSkip(a == e)
+                        case 7: condSkip(b == f)
+                        case 8: condSkip(a > b)
+                        case 9: condSkip(c > d)
+                        case 10: condSkip(a != e)
+                        case 11: condSkip(b != f)
+                        case 12: condSkip(a < b)
+                        case 13: condSkip(c < d)
                         case 14:
                             paused = True
                         case 15:
@@ -503,6 +495,7 @@ class e16:
             self.dt, self.st = dt, st
             self.stk = stk
             self.mem16 = mem16
+        
         else:
             if not dt:
                 paused = False
