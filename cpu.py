@@ -1,7 +1,7 @@
 import random
 
 # echo-16 cpu made by las-r on github
-# v0.3
+# v0.4.1
 
 class BreakLoop(Exception):
     pass
