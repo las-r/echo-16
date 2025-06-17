@@ -1,7 +1,7 @@
 import random
 
 # echo-16 cpu made by las-r on github
-# v0.4.1
+# v0.5
 
 class BreakLoop(Exception):
     pass
@@ -130,8 +130,7 @@ class e16:
             def condSkip(cond):
                 if not cond:
                     skipInst()
-                    return self.pc
-                return pc
+                    pc = self.pc
             
             # debug
             if self.debug:
